@@ -1,0 +1,11 @@
+name = ECK Extend
+description = Implements a simple ECK Basic input Behavior for ECK entities
+package = ECK
+core = 7.x
+dependencies[] = eck
+dependencies[] = entityreference_autocomplete
+dependencies[] = date
+dependencies[] = date_popup
+
+; Our ECKEntityType Class.
+files[] = includes/eckextend.classes.inc

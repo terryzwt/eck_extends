@@ -1,0 +1,465 @@
+<?php
+
+/**
+ * @file
+ * Eckextend module file.
+ */
+
+/**
+ * Implements hook_menu_alter().
+ */
+function eckextend_menu_alter(&$items) {
+  // Use our own entity properties page.
+  foreach (EntityType::loadAll() as $name => $info) {
+    $menu = &$items["admin/structure/entity-type/{$name}/properties"];
+    $menu['page callback'] = array('eckextend_properties');
+    $menu['page arguments'] = array($info->name);
+    $menu['file'] = "includes/eckextend.properties.inc";
+    $menu['module'] = 'eckextend';
+  }
+}
+
+/**
+ * Implements hook_menu().
+ */
+function eckextend_menu() {
+  $items = array();
+  foreach (EntityType::loadAll() as $name => $info) {
+    // Property add.
+    $items["admin/structure/entity-type/{$name}/properties/add"] = array(
+      'title' => "Add Property",
+      'description' => "Delete property for {$info->label} entity type",
+      'page callback' => 'drupal_get_form',
+      'page arguments' => array('eckextend_property_add_form', $name),
+      'access callback' => 'eck__multiple_access_check',
+      'access arguments' => array(
+        array(
+          'eck administer entity types',
+          "manage {$info->name} properties",
+        ),
+      ),
+      'type' => MENU_LOCAL_ACTION,
+      'file' => 'includes/eckextend.properties.inc',
+    );
+    // Property edit.
+    $items["admin/structure/entity-type/{$name}/properties/edit/%"] = array(
+      'title' => "ECK Property Edit",
+      'description' => "Edit property for {$info->label} entity type",
+      'page callback' => "drupal_get_form",
+      'page arguments' => array('eckextend_property_edit_form', $name, 6),
+      'access callback' => 'eck__multiple_access_check',
+      'access arguments' => array(
+        array(
+          'eck administer entity types',
+          "manage {$info->name} properties",
+        ),
+      ),
+      'file' => 'includes/eckextend.properties.inc',
+    );
+    // Property delete.
+    $items["admin/structure/entity-type/{$name}/properties/delete/%"] = array(
+      'title' => "ECK Property Delete",
+      'description' => "Delete property for {$info->label} entity type",
+      'page callback' => "drupal_get_form",
+      'page arguments' => array('eckextend_property_delete_form', $name, 6),
+      'access callback' => 'eck__multiple_access_check',
+      'access arguments' => array(
+        array(
+          'eck administer entity types',
+          "manage {$info->name} properties",
+        ),
+      ),
+      'file' => 'includes/eckextend.properties.inc',
+    );
+  }
+
+  return $items;
+}
+
+/**
+ * Implements hook_entity_property_info_alter().
+ */
+function eckextend_entity_property_info_alter(&$info) {
+  foreach (EntityType::loadAll() as $name => $entity_type) {
+    foreach ($entity_type->properties as $property => $data) {
+      if ($data['behavior'] != 'reference' || !isset($data['settings']['target_type'])) {
+        continue;
+      }
+      $target_type = $data['settings']['target_type'];
+      if ($target_type && $entity_info = entity_get_info($target_type)) {
+        $info[$name]['properties'][$property]['type'] = $target_type;
+        $info[$name]['properties'][$property]['description'] = t('Referenced Entity of type: @entity', array('@entity' => $entity_info['label']));
+      }
+    }
+  }
+}
+
+/**
+ * Implements hook_ctools_plugin_directory().
+ */
+function eckextend_ctools_plugin_directory($owner, $plugin_type) {
+  if ($owner == 'eck' && $plugin_type == 'property_behavior') {
+    return 'plugins/' . $plugin_type;
+  }
+}
+
+/**
+ * Implemetation of hook_eck_property_type_schema().
+ */
+function eckextend_eck_property_type_schema_alter(&$schema, $type) {
+  $eckextend_schema = _eckextend_eck_property_types($type);
+  if ($eckextend_schema) {
+    $schema = $eckextend_schema;
+  }
+}
+
+/**
+ * Implemetation of hook_eck_property_types().
+ */
+function eckextend_eck_property_types_alter(&$default_types) {
+  foreach (_eckextend_eck_property_types() as $name => $type) {
+    $default_types[$name] = $type['description'];
+  }
+}
+
+/**
+ * A list of property types implemented by ECK Extend module.
+ */
+function _eckextend_eck_property_types($type = NULL) {
+  $types = array(
+    'int_11' => array(
+      'description' => 'Int 11',
+      'type' => 'int',
+      'length' => 11,
+      'not null' => FALSE,
+      'default' => NULL,
+    ),
+    'varchar_255' => array(
+      'description' => 'Varchar 255',
+      'type' => 'varchar',
+      'length' => 255,
+      'not null' => FALSE,
+      'default' => NULL,
+    ),
+    'decimal_20' => array(
+      'description' => 'Decimal 18,2',
+      'type' => 'numeric',
+      'precision' => 20,
+      'scale' => 2,
+      'not null' => FALSE,
+      'default' => NULL,
+    ),
+    'longtext' => array(
+      'description' => 'Long text',
+      'type' => 'text',
+      'size' => 'big',
+      'default' => NULL,
+      'not null' => FALSE,
+    ),
+  );
+  if (!$type) {
+    return $types;
+  }
+  if ($type && isset($types[$type])) {
+    return $types[$type];
+  }
+}
+
+/**
+ * DEPRECATED: Helper function to get the entity name.
+ *
+ * We save all entities or vocabularies as id_{entity} or id_{vocabulary}.
+ */
+function eckextend_reference_get_entity_name($property_name = '') {
+  if ($property_name == '') {
+    return FALSE;
+  }
+
+  // Only explode in 2, because the name might contain "_".
+  $property = explode('_', $property_name, 2);
+  if (isset($property[1])) {
+    return $property[1];
+  }
+
+  return FALSE;
+}
+
+/**
+ * DEPRECATED: Custom form element validator for 'vocabulary' behavior.
+ */
+function eckextend_vocabulary_property_validate($element, &$form_state) {
+  // Use the same validation as for 'reference' behavior.
+  eckextend_reference_property_validate($element, $form_state);
+}
+
+/**
+ * DEPRECATED: Custom form element validator for 'reference' behavior.
+ */
+function eckextend_reference_property_validate($element, &$form_state) {
+  // Make sure we have values.
+  if (empty($element['#value'])) {
+    form_set_value($element, NULL, $form_state);
+    return;
+  }
+  // Get the entity ID at the end of our string.
+  if (preg_match("/.+\((\d+)\)/", $element['#value'], $matches)) {
+    // Set the value in form_state.
+    form_set_value($element, $matches[1], $form_state);
+  }
+  else {
+    // Empty the selected input.
+    form_set_value($element, NULL, $form_state);
+    $error = t('Please select a valid option for @elm', array('@elm' => $element['#title']));
+    form_set_error($element['#name'], $error);
+  }
+}
+
+/**
+ * Implements hook_date_popup_process_alter().
+ */
+function eckextend_date_popup_process_alter(&$element, &$form_state, $context) {
+  // We've added our custom key #eck_date_property to be able to update the date
+  // fields from date format to timestamp.
+  if (isset($element['#eck_date_property'])) {
+    $element['#element_validate'][] = 'eckextend_date_element_validate';
+  }
+}
+
+/**
+ * Custom element validate for ECK date property behavior.
+ */
+function eckextend_date_element_validate(&$element, &$form_state) {
+  // Convert date property values to timestamp to be saved as int in database.
+  $timestamp = 0;
+  if (isset($element['#value']['date']) && !empty($element['#value']['date'])) {
+    $date_time = DateTime::createFromFormat('d/m/Y', $element['#value']['date']);
+    $timestamp = strtotime($date_time->format('m/d/Y'));
+  }
+  form_set_value($element, $timestamp, $form_state);
+}
+
+/**
+ * Custom theme function for properties.
+ *
+ * Add wrappers to mimic theme from fields and #access support on theme level
+ * allowing the use of entity cache.
+ *
+ * @TODO: use a template file.
+ */
+function eckextend_theme_property($value = '', $property = '', $entity = FALSE) {
+  if ($value == '' || $property == '') {
+    return '';
+  }
+
+  $classes = 'field eck-property eck-property-' . $property;
+
+  $property_label = eckextend_get_eck_property_label($property, $entity->entityType());
+  $label = '<div class="property-label field-label">' . $property_label . '</div>';
+  if ($entity_info = entity_get_property_info($entity->entityType())) {
+    $classes .= ' property-behavior-' . $entity_info['properties'][$property]['type'];
+  }
+
+  return array(
+    // Support for entity property access is weak, so we check property access
+    // while theming. This allows us to properly use entity cache.
+    '#access' => eckextend_property_access($entity, $property),
+    '#prefix' => '<div class="' . $classes . '">' . $label,
+    '#suffix' => '</div>',
+    'content' => array(
+      '#prefix' => '<div class="property-content">',
+      '#markup' => $value,
+      '#suffix' => '</div>',
+    ),
+  );
+}
+
+/**
+ * Eckextend property access function.
+ */
+function eckextend_property_access($entity, $property_name, $op = 'view') {
+  $access = TRUE;
+
+  $type = $entity->entityType();
+  $alter_function = 'eckextend_entity_' . $type . '_property_access';
+  // Allow other modules to alter per property type access.
+  drupal_alter($alter_function, $access, $property_name, $entity, $op);
+
+  return $access;
+}
+
+/**
+ * DEPRECATED Helper function to get property #required status user by Form API.
+ */
+function eckextend_get_property_required_info($entity, $property) {
+  // Required status is stored in variables as {entity}_required_properties.
+  $variable = $entity->entityType() . '_required_properties';
+  $required_prop = variable_get($variable, array());
+  // Not all properties have required status.
+  if (isset($required_prop[$property]) && $required_prop[$property]) {
+    return TRUE;
+  }
+  // By default, properties are not required.
+  return FALSE;
+}
+
+/**
+ * Helper function to get entity types implemented by eck module.
+ */
+function eckextend_get_eck_entity_types() {
+  $eck_entity_types = &drupal_static(__FUNCTION__, array());
+  if (count($eck_entity_types) == 0) {
+    foreach (EntityType::loadAll() as $eck_entity_type) {
+      foreach (Bundle::loadByEntityType($eck_entity_type) as $eck_bundle) {
+        $eck_entity_types[$eck_entity_type->name][] = $eck_bundle->name;
+      }
+    }
+  }
+
+  return $eck_entity_types;
+}
+
+/**
+ * Provide a general 'default_formatter' to be used by all plugins.
+ */
+function eckextend_property_default_formatter($property, $vars) {
+  $value = eckextend_get_property_value($vars['entity'], $property);
+
+  return eckextend_theme_property($value, $property, $vars['entity']);
+}
+
+function eckextend_property_default_form($property, $vars) {
+  $settings = isset($vars['settings']) ? $vars['settings'] : NULL;
+  // Property specific form.
+  $form = array();
+  $form['required'] = array(
+    '#title' => t('Required property'),
+    '#type' => 'checkbox',
+    '#default_value' => isset($settings['required']) ? $settings['required'] : NULL,
+  );
+
+  return $form;
+}
+
+/**
+ * Helper function to get the property value out of the entity.
+ */
+function eckextend_get_property_value($entity, $property) {
+  return (isset($entity->{$property})) ? $entity->{$property} : NULL;
+}
+
+/**
+ * Helper function to get the property label as setup in ECK admin panel.
+ */
+function eckextend_get_eck_property_label($property = NULL, $entity_type = NULL) {
+  if (!$property || !$entity_type) {
+    return FALSE;
+  }
+
+  $entity_settings = EntityType::loadByName($entity_type);
+  if (!$entity_type) {
+    return FALSE;
+  }
+
+  $properties = $entity_settings->properties;
+  if (isset($properties[$property]['label'])) {
+    return $properties[$property]['label'];
+  }
+
+  return FALSE;
+}
+
+/**
+ * Property element validate: set empty properties to NULL.
+ */
+function eckextend_null_property(&$element, &$form_state) {
+  if (empty($element['#value'])) {
+    form_set_value($element, NULL, $form_state);
+  }
+}
+
+/**
+ * Invoke behavior plugin function.
+ */
+function eckextend_property_behavior_invoke_plugin($function_name, $vars = array()) {
+  if (!isset($vars['behavior'])) {
+    return;
+  }
+  $default = array('entity_type' => NULL, 'property' => NULL);
+  $vars = array_merge($default, $vars);
+  $plugin = ctools_get_plugins('eck', 'property_behavior', $vars['behavior']);
+  if ($function = ctools_plugin_get_function($plugin, $function_name)) {
+    return $function($vars['property'], $vars);
+  }
+}
+
+/**
+ * Get entity property settings.
+ */
+function eckextend_property_settings($type_name, $property_name) {
+  $entity_info = EckEntityType::loadByName($type_name);
+  if (isset($entity_info->properties[$property_name]['settings'])) {
+    return $entity_info->properties[$property_name]['settings'];
+  }
+}
+
+/**
+ * Element validate for list options.
+ */
+function eckextend_list_allowed_values_setting_validate($element, &$form_state) {
+  $values = _eckextend_list_extract_options($element['#value']);
+  if (!is_array($values) || empty($values)) {
+    form_set_error(implode('][', $element['#parents']), t('Invalid option list.'));
+  }
+  else {
+    form_set_value($element, $values, $form_state);
+  }
+}
+
+/**
+ * Generates a string representation of an array of 'options'.
+ */
+function _eckextend_list_options_string($values) {
+  $lines = array();
+  foreach ($values as $key => $value) {
+    $lines[] = "$key|$value";
+  }
+
+  return implode("\n", $lines);
+}
+
+/**
+ * Parses a string of 'options' into an array.
+ */
+function _eckextend_list_extract_options($string) {
+  $values = array();
+
+  $list = explode("\n", $string);
+  $list = array_map('trim', $list);
+  $list = array_filter($list, 'strlen');
+
+  $generated_keys = $explicit_keys = FALSE;
+  foreach ($list as $position => $text) {
+    $value = $key = FALSE;
+
+    // Check for an explicit key.
+    $matches = array();
+    if (preg_match('/(.*)\|(.*)/', $text, $matches)) {
+      $key = $matches[1];
+      $value = $matches[2];
+      $explicit_keys = TRUE;
+    }
+    else {
+      $key = $value = $text;
+      $explicit_keys = TRUE;
+    }
+
+    $values[$key] = $value;
+  }
+
+  // We generate keys only if the list contains no explicit key at all.
+  if ($explicit_keys && $generated_keys) {
+    return;
+  }
+
+  return $values;
+}
